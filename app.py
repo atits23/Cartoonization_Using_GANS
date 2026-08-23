@@ -1,9 +1,5 @@
 """
 Cartoonizer — Streamlit front-end for CartoonGAN.
-
-Run:      streamlit run app.py
-Expects:  exported_models/my_cartoongan_SavedModel/  (produced by Section 13 of the notebook)
-          and/or a clone of https://github.com/mnicnc404/CartoonGan-tensorflow for pretrained styles.
 """
 
 import io
@@ -23,29 +19,31 @@ MODEL_PATHS = {
     "Pretrained · Paprika": "CartoonGan-tensorflow/exported_models/light_paprika_SavedModel",
 }
 
-
 # ----------------------------------------------------------------------------- model
 @st.cache_resource(show_spinner="Loading model…")
 def load_model(path: str):
-    """Loads once per session. Removing the cache decorator makes every click reload TF."""
     if path.endswith((".keras", ".h5")):
         return tf.keras.models.load_model(path, compile=False)
     return tf.saved_model.load(path)
 
-
 def run_model(model, batch: np.ndarray) -> np.ndarray:
-    out = (
-        model(tf.constant(batch), training=False)
-        if isinstance(model, tf.keras.Model)
-        else model(tf.constant(batch))
-    )
+    # 1. If it's a Keras Model instance
+    if isinstance(model, tf.keras.Model):
+        out = model(tf.constant(batch), training=False)
+    # 2. If it's a SavedModel with signatures (This handles your custom exported model)
+    elif hasattr(model, "signatures") and len(model.signatures) > 0:
+        sig_name = list(model.signatures.keys())[0]
+        infer = model.signatures[sig_name]
+        out = infer(tf.constant(batch))
+    # 3. Direct callable fallback
+    else:
+        out = model(tf.constant(batch))
+
     if isinstance(out, dict):
         out = list(out.values())[0]
     return np.array(out)
 
-
 def cartoonize(pil_img: Image.Image, model, max_dim: int = 512) -> Image.Image:
-    """Scale down, pad to a multiple of 4, run the generator, crop back."""
     img = pil_img.convert("RGB")
     w, h = img.size
 
@@ -60,7 +58,6 @@ def cartoonize(pil_img: Image.Image, model, max_dim: int = 512) -> Image.Image:
 
     out = run_model(model, arr)[0][:h, :w]
     return Image.fromarray(np.clip((out + 1) * 127.5, 0, 255).astype(np.uint8))
-
 
 # ----------------------------------------------------------------------------- sidebar
 st.sidebar.title("Settings")
